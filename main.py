@@ -13,7 +13,7 @@ from app.ui.main_menu import MainMenu
 class SchoolControlApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Sistema de Control Escolar")
+        self.title("Sistema de Gestión Universitaria Estudiantil")
         self.geometry('1024x720')
         self.api = ApiClient(CONFIG.api_base_url)
         self.session = UserSession()

@@ -17,7 +17,7 @@ class LoginFrame(ttk.Frame):
 
         self.columnconfigure(0, weight=1)
 
-        ttk.Label(self, text="Sistema de Control Escolar", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, pady=(0, 20))
+        ttk.Label(self, text="Sistema de Gestión Universitaria Estudiantil", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, pady=(0, 20))
 
         form = ttk.Frame(self)
         form.grid(row=1, column=0, sticky="nsew")

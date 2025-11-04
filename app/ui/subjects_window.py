@@ -57,6 +57,7 @@ class SubjectsWindow(ModuleWindow):
         ttk.Entry(form, textvariable=self.semester_var).grid(row=3, column=1, sticky="ew", pady=5)
 
         self.career_var = tk.StringVar()
+        self.careers = []
         ttk.Label(form, text="Carrera").grid(row=4, column=0, sticky="w", pady=5)
         self.career_combo = ttk.Combobox(form, textvariable=self.career_var, state='readonly')
         self.career_combo.grid(row=4, column=1, sticky="ew", pady=5)
@@ -76,13 +77,14 @@ class SubjectsWindow(ModuleWindow):
             self.career_var.set(career_values[0])
 
     def _load_subjects(self) -> None:
-        params = {}
-        if self.career_var.get():
-            params['careerId'] = self.career_var.get().split(' - ')[0]
-        subjects = self.api.get('/subjects', params=params if params else None)
         self.tree.delete(*self.tree.get_children())
-        for subject in subjects:
-            self.tree.insert('', tk.END, values=(subject['id'], subject['name'], subject['credits'], subject['semester'], subject.get('careerName', '')))
+        print(self.careers)
+        for career in self.careers:
+            params = {}
+            params['careerId'] = career['id']
+            subjects = self.api.get('/subjects', params=params if params else None)
+            for subject in subjects:
+                self.tree.insert('', tk.END, values=(subject['id'], subject['name'], subject['credits'], subject['semester'], subject.get('careerName', '')))
 
     def _reset(self) -> None:
         self.current_id = None

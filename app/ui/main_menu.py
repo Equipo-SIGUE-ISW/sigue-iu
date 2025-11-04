@@ -71,7 +71,7 @@ class MainMenu(ttk.Frame):
             return
 
         window = window_class(self.winfo_toplevel(), self.api, self.session)
-        window.title(f"{name} - Sistema de Control Escolar")
+        window.title(f"{name} - SIGUE")
         window.protocol("WM_DELETE_WINDOW", lambda w=window, key=name: self._close_window(key, w))
         self._windows[name] = window
 
