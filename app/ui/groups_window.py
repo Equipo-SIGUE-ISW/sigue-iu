@@ -4,228 +4,315 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Any, Dict, List, Optional
 
-from app.services.api_client import ApiClient
+from app.services.api_client import ApiClient, ApiError
 from app.services.session import UserSession
-from app.ui.base_window import ModuleWindow
+# from app.ui.base_window import ModuleWindow # Ya no se usa
 
-
-class GroupsWindow(ModuleWindow):
+# CAMBIO 1: Heredar de ttk.Frame
+class GroupsWindow(ttk.Frame):
     def __init__(self, master: tk.Misc, api: ApiClient, session: UserSession) -> None:
-        super().__init__(master, api, session)
-        self.title("Grupos")
+        super().__init__(master, padding=20) # CAMBIO 2: Aplicar padding aquí
+        self.api = api
+        self.session = session
         self.current_id: Optional[int] = None
+        
+        # Listas de datos para los combobox
         self.careers: List[Dict[str, Any]] = []
-        self.subjects_by_career: Dict[int, List[Dict[str, Any]]] = {}
         self.teachers: List[Dict[str, Any]] = []
         self.classrooms: List[Dict[str, Any]] = []
         self.schedules: List[Dict[str, Any]] = []
+        # MEJORA: Caché para materias, en lugar de cargar todo
+        self.subjects_cache: Dict[int, List[Dict[str, Any]]] = {}
 
-        container = ttk.Frame(self, padding=20)
-        container.pack(fill=tk.BOTH, expand=True)
-        container.columnconfigure(0, weight=1)
+        # --- MEJORA ESTÉTICA: Paleta de Colores ---
+        self.COLOR_BG = "#ecf0f1"
+        self.COLOR_PRIMARY = "#3498db"
+        self.COLOR_DANGER = "#e74c3c"
+        self.COLOR_TEXT_DARK = "#2c3e50"
+        self.COLOR_WHITE = "#ffffff"
+        self.COLOR_GRAY_BORDER = "#bdc3c7"
 
-        self._build_tree(container)
-        self._build_form(container)
+        # --- MEJORA ESTÉTICA: Aplicar Estilos ---
+        self.style = ttk.Style(self)
+        self.style.configure('Content.TFrame', background=self.COLOR_BG)
+        self.configure(style='Content.TFrame')
+        self.style.configure('Content.TLabel', background=self.COLOR_BG, foreground=self.COLOR_TEXT_DARK, font=('Segoe UI', 10))
+        self.style.configure('Form.TLabelframe', background=self.COLOR_BG, relief="solid", borderwidth=1, bordercolor=self.COLOR_GRAY_BORDER)
+        self.style.configure('Form.TLabelframe.Label', background=self.COLOR_BG, foreground=self.COLOR_TEXT_DARK, font=('Segoe UI', 12, 'bold'))
+        self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=self.COLOR_PRIMARY, foreground=self.COLOR_WHITE)
+        self.style.map('Primary.TButton', background=[('active', '#2980b9'), ('pressed', '#2980b9')])
+        self.style.configure('Danger.TButton', font=('Segoe UI', 10, 'bold'), background=self.COLOR_DANGER, foreground=self.COLOR_WHITE)
+        self.style.map('Danger.TButton', background=[('active', '#c0392b'), ('pressed', '#c0392b')])
+        self.style.configure('TListbox', background=self.COLOR_WHITE, foreground=self.COLOR_TEXT_DARK, borderwidth=1, relief='solid', fieldbackground=self.COLOR_WHITE)
+
+        # CAMBIO 3: Layout directo en el frame
+        self.pack(fill=tk.BOTH, expand=True)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1) # Fila 1 (tabla) se expandirá
+
+        ttk.Label(self, text="Gestión de Grupos", font=("Segoe UI", 16, "bold"), background=self.COLOR_BG).grid(row=0, column=0, sticky="w", pady=(0, 15))
+
+        self._build_tree(self)
+        self._build_form(self)
         self._fetch_support_data()
         self._load_groups()
 
     def _build_tree(self, container: ttk.Frame) -> None:
+        tree_container = ttk.Frame(container, style='Content.TFrame')
+        tree_container.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+        tree_container.rowconfigure(0, weight=1)
+        tree_container.columnconfigure(0, weight=1)
+
         columns = ('id', 'name', 'career', 'subject', 'teacher', 'schedule')
-        self.tree = ttk.Treeview(container, columns=columns, show='headings', height=7)
-        headers = {
-            'id': 'ID',
-            'name': 'Grupo',
-            'career': 'Carrera',
-            'subject': 'Materia',
-            'teacher': 'Maestro',
-            'schedule': 'Horario'
-        }
+        self.tree = ttk.Treeview(tree_container, columns=columns, show='headings', height=7)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+
+        # MEJORA: Scrollbar
+        scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        
+        headers = {'id': 'ID', 'name': 'Grupo', 'career': 'Carrera', 'subject': 'Materia', 'teacher': 'Maestro', 'schedule': 'Horario'}
+        col_widths = {'id': 40, 'name': 100, 'career': 150, 'subject': 150, 'teacher': 150, 'schedule': 100}
+
         for col in columns:
             self.tree.heading(col, text=headers[col])
-            self.tree.column(col, stretch=True)
-        self.tree.grid(row=0, column=0, sticky="nsew", pady=10)
-        container.rowconfigure(0, weight=1)
+            self.tree.column(col, width=col_widths[col], stretch=True)
+            
         self.tree.bind('<<TreeviewSelect>>', self._on_select)
 
     def _build_form(self, container: ttk.Frame) -> None:
-        form = ttk.LabelFrame(container, text="Datos del grupo", padding=15)
-        form.grid(row=1, column=0, sticky="nsew")
-        form.columnconfigure(1, weight=1)
+        form = ttk.LabelFrame(container, text="Datos del grupo", style='Form.TLabelframe', padding=15)
+        form.grid(row=2, column=0, sticky="nsew")
+        form.columnconfigure(1, weight=3) # Dar más peso a la columna de widgets
+        form.columnconfigure(3, weight=3)
+        form.rowconfigure(10, weight=1) # Fila de la tabla de estudiantes
 
+        # --- Columna 0 (Izquierda) ---
         self.id_var = tk.StringVar()
-        ttk.Label(form, text="ID").grid(row=0, column=0, sticky="w", pady=5)
-        ttk.Entry(form, textvariable=self.id_var, state='readonly').grid(row=0, column=1, sticky="ew", pady=5)
+        ttk.Label(form, text="ID", style='Content.TLabel').grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        ttk.Entry(form, textvariable=self.id_var, state='readonly').grid(row=0, column=1, sticky="ew", pady=5, padx=5)
 
         self.name_var = tk.StringVar()
-        ttk.Label(form, text="Nombre de grupo").grid(row=1, column=0, sticky="w", pady=5)
-        ttk.Entry(form, textvariable=self.name_var).grid(row=1, column=1, sticky="ew", pady=5)
+        ttk.Label(form, text="Nombre de grupo", style='Content.TLabel').grid(row=1, column=0, sticky="w", pady=5, padx=5)
+        ttk.Entry(form, textvariable=self.name_var).grid(row=1, column=1, sticky="ew", pady=5, padx=5)
 
         self.career_var = tk.StringVar()
-        ttk.Label(form, text="Carrera").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Carrera", style='Content.TLabel').grid(row=2, column=0, sticky="w", pady=5, padx=5)
         self.career_combo = ttk.Combobox(form, textvariable=self.career_var, state='readonly')
-        self.career_combo.grid(row=2, column=1, sticky="ew", pady=5)
-        self.career_combo.bind('<<ComboboxSelected>>', lambda _e: self._refresh_subject_combo())
+        self.career_combo.grid(row=2, column=1, sticky="ew", pady=5, padx=5)
+        self.career_combo.bind('<<ComboboxSelected>>', self._refresh_subject_combo)
 
         self.subject_var = tk.StringVar()
-        ttk.Label(form, text="Materia").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Materia", style='Content.TLabel').grid(row=3, column=0, sticky="w", pady=5, padx=5)
         self.subject_combo = ttk.Combobox(form, textvariable=self.subject_var, state='readonly')
-        self.subject_combo.grid(row=3, column=1, sticky="ew", pady=5)
+        self.subject_combo.grid(row=3, column=1, sticky="ew", pady=5, padx=5)
 
+        # --- Columna 2 (Derecha) ---
         self.teacher_var = tk.StringVar()
-        ttk.Label(form, text="Maestro").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Maestro", style='Content.TLabel').grid(row=0, column=2, sticky="w", pady=5, padx=5)
         self.teacher_combo = ttk.Combobox(form, textvariable=self.teacher_var, state='readonly')
-        self.teacher_combo.grid(row=4, column=1, sticky="ew", pady=5)
+        self.teacher_combo.grid(row=0, column=3, sticky="ew", pady=5, padx=5)
 
         self.classroom_var = tk.StringVar()
-        ttk.Label(form, text="Salón").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Salón", style='Content.TLabel').grid(row=1, column=2, sticky="w", pady=5, padx=5)
         self.classroom_combo = ttk.Combobox(form, textvariable=self.classroom_var, state='readonly')
-        self.classroom_combo.grid(row=5, column=1, sticky="ew", pady=5)
+        self.classroom_combo.grid(row=1, column=3, sticky="ew", pady=5, padx=5)
 
         self.schedule_var = tk.StringVar()
-        ttk.Label(form, text="Horario").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Horario", style='Content.TLabel').grid(row=2, column=2, sticky="w", pady=5, padx=5)
         self.schedule_combo = ttk.Combobox(form, textvariable=self.schedule_var, state='readonly')
-        self.schedule_combo.grid(row=6, column=1, sticky="ew", pady=5)
+        self.schedule_combo.grid(row=2, column=3, sticky="ew", pady=5, padx=5)
 
         self.semester_var = tk.StringVar()
-        ttk.Label(form, text="Semestre").grid(row=7, column=0, sticky="w", pady=5)
-        ttk.Entry(form, textvariable=self.semester_var).grid(row=7, column=1, sticky="ew", pady=5)
+        ttk.Label(form, text="Semestre", style='Content.TLabel').grid(row=3, column=2, sticky="w", pady=5, padx=5)
+        ttk.Entry(form, textvariable=self.semester_var).grid(row=3, column=3, sticky="ew", pady=5, padx=5)
 
         self.max_students_var = tk.StringVar()
-        ttk.Label(form, text="Máx. alumnos").grid(row=8, column=0, sticky="w", pady=5)
-        ttk.Entry(form, textvariable=self.max_students_var).grid(row=8, column=1, sticky="ew", pady=5)
+        ttk.Label(form, text="Máx. alumnos", style='Content.TLabel').grid(row=4, column=2, sticky="w", pady=5, padx=5)
+        ttk.Entry(form, textvariable=self.max_students_var).grid(row=4, column=3, sticky="ew", pady=5, padx=5)
 
-        buttons = ttk.Frame(form)
-        buttons.grid(row=9, column=0, columnspan=2, pady=15)
-        ttk.Button(buttons, text="Nuevo", command=self._reset).grid(row=0, column=0, padx=5)
-        ttk.Button(buttons, text="Guardar", command=self._save).grid(row=0, column=1, padx=5)
-        ttk.Button(buttons, text="Eliminar", command=self._delete).grid(row=0, column=2, padx=5)
+        # --- Botones ---
+        buttons = ttk.Frame(form, style='Content.TFrame')
+        buttons.grid(row=5, column=0, columnspan=4, pady=15)
+        ttk.Button(buttons, text="Nuevo", command=self._reset, style='Primary.TButton').grid(row=0, column=0, padx=5)
+        ttk.Button(buttons, text="Guardar", command=self._save, style='Primary.TButton').grid(row=0, column=1, padx=5)
+        ttk.Button(buttons, text="Eliminar", command=self._delete, style='Danger.TButton').grid(row=0, column=2, padx=5)
 
-        ttk.Label(form, text="Alumnos inscritos").grid(row=10, column=0, sticky="w", pady=(15, 5))
+        # --- Tabla de Alumnos ---
+        ttk.Label(form, text="Alumnos inscritos", style='Content.TLabel').grid(row=10, column=0, sticky="nw", pady=(15, 5), padx=5)
+        
+        student_tree_container = ttk.Frame(form, style='Content.TFrame')
+        student_tree_container.grid(row=10, column=1, columnspan=3, sticky="nsew", pady=5, padx=5)
+        student_tree_container.rowconfigure(0, weight=1)
+        student_tree_container.columnconfigure(0, weight=1)
+
         students_columns = ('studentId', 'name', 'email', 'status')
-        self.students_tree = ttk.Treeview(form, columns=students_columns, show='headings', height=6)
-        headers_students = {
-            'studentId': 'ID',
-            'name': 'Nombre',
-            'email': 'Correo',
-            'status': 'Estado'
-        }
+        self.students_tree = ttk.Treeview(student_tree_container, columns=students_columns, show='headings', height=5)
+        self.students_tree.grid(row=0, column=0, sticky="nsew")
+        
+        student_scrollbar = ttk.Scrollbar(student_tree_container, orient="vertical", command=self.students_tree.yview)
+        self.students_tree.configure(yscrollcommand=student_scrollbar.set)
+        student_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        headers_students = {'studentId': 'ID', 'name': 'Nombre', 'email': 'Correo', 'status': 'Estado'}
         for col in students_columns:
             self.students_tree.heading(col, text=headers_students[col])
-            self.students_tree.column(col, stretch=True)
-        self.students_tree.grid(row=10, column=1, sticky="nsew")
-        form.rowconfigure(10, weight=1)
+            self.students_tree.column(col, width=100, stretch=True)
 
     def _fetch_support_data(self) -> None:
-        self.careers = self.api.get('/careers')
-        self.career_combo.configure(values=[f"{item['id']} - {item['name']}" for item in self.careers])
+        try:
+            self.careers = self.api.get('/careers')
+            self.career_combo.configure(values=[f"{item['id']} - {item['name']}" for item in self.careers])
 
-        subjects = self.api.get('/subjects')
-        for subject in subjects:
-            self.subjects_by_career.setdefault(subject['careerId'], []).append(subject)
-        self._refresh_subject_combo()
+            self.teachers = self.api.get('/teachers')
+            self.teacher_combo.configure(values=[f"{item['id']} - {item['name']}" for item in self.teachers])
 
-        self.teachers = self.api.get('/teachers')
-        self.teacher_combo.configure(values=[f"{item['id']} - {item['name']}" for item in self.teachers])
+            self.classrooms = self.api.get('/classrooms')
+            self.classroom_combo.configure(values=[f"{item['id']} - {item['name']} ({item['building']})" for item in self.classrooms])
 
-        self.classrooms = self.api.get('/classrooms')
-        self.classroom_combo.configure(values=[f"{item['id']} - {item['name']}" for item in self.classrooms])
+            self.schedules = self.api.get('/schedules')
+            self.schedule_combo.configure(values=[f"{item['id']} - {item['time']} ({item['shift']})" for item in self.schedules])
+        except ApiError as e:
+            messagebox.showerror("Error de Carga", f"No se pudieron cargar los datos de soporte (carreras, maestros, etc.): {e.message}")
 
-        self.schedules = self.api.get('/schedules')
-        self.schedule_combo.configure(values=[f"{item['id']} - {item['time']} ({item['shift']})" for item in self.schedules])
-
-    def _refresh_subject_combo(self) -> None:
-        if not self.career_var.get():
+    def _refresh_subject_combo(self, _event: Optional[tk.Event] = None) -> None:
+        """Carga dinámicamente las materias de la carrera seleccionada."""
+        career_id_str = self.career_var.get().split(' - ')[0]
+        if not career_id_str.isdigit():
             self.subject_combo.configure(values=[])
+            self.subject_var.set('')
             return
-        career_id = int(self.career_var.get().split(' - ')[0])
-        subjects = self.subjects_by_career.get(career_id, [])
+            
+        career_id = int(career_id_str)
+        subjects = []
+        try:
+            if career_id in self.subjects_cache:
+                subjects = self.subjects_cache[career_id]
+            else:
+                subjects = self.api.get('/subjects', params={'careerId': career_id})
+                self.subjects_cache[career_id] = subjects
+        except ApiError as e:
+            messagebox.showerror("Error de API", f"No se pudieron cargar las materias para esa carrera: {e.message}")
+            
         values = [f"{item['id']} - {item['name']}" for item in subjects]
         current = self.subject_var.get()
         self.subject_combo.configure(values=values)
-        if current not in values and values:
-            self.subject_var.set(values[0])
+        
+        if current not in values:
+            self.subject_var.set('') # Limpiar si la materia ya no es válida
 
     def _load_groups(self) -> None:
-        groups = self.api.get('/groups')
-        self.tree.delete(*self.tree.get_children())
-        for group in groups:
-            self.tree.insert('', tk.END, values=(
-                group['id'],
-                group['name'],
-                group.get('careerName', ''),
-                group.get('subjectName', ''),
-                group.get('teacherName', ''),
-                f"{group.get('scheduleTime', '')}"
-            ))
+        try:
+            groups = self.api.get('/groups')
+            self.tree.delete(*self.tree.get_children())
+            for group in groups:
+                self.tree.insert('', tk.END, values=(
+                    group['id'],
+                    group['name'],
+                    group.get('careerName', 'N/A'),
+                    group.get('subjectName', 'N/A'),
+                    group.get('teacherName', 'N/A'),
+                    f"{group.get('scheduleTime', 'N/A')}"
+                ))
+        except ApiError as e:
+            messagebox.showerror("Error de Carga", f"No se pudieron cargar los grupos: {e.message}")
 
     def _on_select(self, _event: tk.Event) -> None:
         selection = self.tree.selection()
-        if not selection:
-            return
+        if not selection: return
         item = self.tree.item(selection[0])
-        self._load_group(int(item['values'][0]))
+        try:
+            self._load_group(int(item['values'][0]))
+        except ApiError as e:
+            messagebox.showerror("Error", f"No se pudo cargar el grupo: {e.message}")
 
     def _load_group(self, group_id: int) -> None:
+        # Esta función asume que _load_group(id) levanta ApiError si falla
         data = self.api.get(f'/groups/{group_id}')
+        
         self.current_id = data['id']
         self.id_var.set(str(data['id']))
         self.name_var.set(data['name'])
         self.semester_var.set(str(data['semester']))
         self.max_students_var.set(str(data['maxStudents']))
 
-        if data.get('careerId'):
-            self.career_var.set(f"{data['careerId']} - {data.get('careerName', '')}")
-        if data.get('subjectId'):
-            self.subject_var.set(f"{data['subjectId']} - {data.get('subjectName', '')}")
-        if data.get('teacherId'):
-            teacher_label = f"{data['teacherId']} - {data.get('teacherName', '')}"
-            self.teacher_var.set(teacher_label)
-        if data.get('classroomId'):
-            classroom_label = f"{data['classroomId']} - {data.get('classroomName', '')}"
-            self.classroom_var.set(classroom_label)
-        if data.get('scheduleId'):
-            schedule_label = f"{data['scheduleId']} - {data.get('scheduleTime', '')} ({data.get('scheduleShift', '')})"
-            self.schedule_var.set(schedule_label)
+        # Helper para encontrar el string correcto en la lista de combobox
+        def find_in_list(data_list: List[Dict], key: str, data_id: int, name_key: str) -> str:
+            for item in data_list:
+                if item['id'] == data_id:
+                    # Reconstruir el string exacto del combobox
+                    if key == 'classrooms':
+                        return f"{item['id']} - {item['name']} ({item['building']})"
+                    if key == 'schedules':
+                        return f"{item['id']} - {item['time']} ({item['shift']})"
+                    return f"{item['id']} - {item[name_key]}"
+            return f"{data_id} - {data.get(name_key, 'N/A')}"
 
+        if data.get('careerId'):
+            self.career_var.set(find_in_list(self.careers, 'careers', data['careerId'], 'careerName'))
+        
+        # Cargar materias ANTES de setear la materia
         self._refresh_subject_combo()
+        if data.get('subjectId'):
+            # No podemos usar find_in_list para materias, ya que se cargan dinámicamente
+            self.subject_var.set(f"{data['subjectId']} - {data.get('subjectName', 'N/A')}")
+            
+        if data.get('teacherId'):
+            self.teacher_var.set(find_in_list(self.teachers, 'teachers', data['teacherId'], 'teacherName'))
+        if data.get('classroomId'):
+            self.classroom_var.set(find_in_list(self.classrooms, 'classrooms', data['classroomId'], 'classroomName'))
+        if data.get('scheduleId'):
+            self.schedule_var.set(find_in_list(self.schedules, 'schedules', data['scheduleId'], 'scheduleTime'))
+
         self._load_students(data.get('students', []))
 
     def _load_students(self, students: List[Dict[str, Any]]) -> None:
         self.students_tree.delete(*self.students_tree.get_children())
         for student in students:
-            self.students_tree.insert('', tk.END, values=(student['studentId'], student['name'], student.get('email', ''), student['status']))
+            self.students_tree.insert('', tk.END, values=(
+                student['studentId'], student['name'], student.get('email', 'N/A'), student['status']
+            ))
 
     def _collect_payload(self) -> Dict[str, Any]:
-        required_fields = [
-            (self.name_var.get().strip(), 'Nombre de grupo'),
-            (self.career_var.get().strip(), 'Carrera'),
-            (self.subject_var.get().strip(), 'Materia'),
-            (self.teacher_var.get().strip(), 'Maestro'),
-            (self.classroom_var.get().strip(), 'Salón'),
-            (self.schedule_var.get().strip(), 'Horario'),
-            (self.semester_var.get().strip(), 'Semestre'),
-            (self.max_students_var.get().strip(), 'Máx. alumnos')
+        payload: Dict[str, Any] = {}
+        
+        # --- VALIDACIÓN ROBUSTA (AÑADIDA) ---
+        name = self.name_var.get().strip()
+        if not name:
+            raise ValueError('El Nombre de grupo es requerido.')
+        if not all(c.isalnum() or c.isspace() or c == '-' for c in name):
+             raise ValueError("El nombre del grupo solo puede contener letras, números, espacios o guiones.")
+        payload['name'] = name
+
+        required_combos = [
+            (self.career_var.get(), 'careerId', 'Carrera'),
+            (self.subject_var.get(), 'subjectId', 'Materia'),
+            (self.teacher_var.get(), 'teacherId', 'Maestro'),
+            (self.classroom_var.get(), 'classroomId', 'Salón'),
+            (self.schedule_var.get(), 'scheduleId', 'Horario'),
         ]
-        for value, label in required_fields:
-            if not value:
-                raise ValueError(f'{label} es requerido')
+        for value, key, label in required_combos:
+            if not value or not value.split(' - ')[0].isdigit():
+                raise ValueError(f'Debes seleccionar una opción válida para {label}.')
+            payload[key] = int(value.split(' - ')[0])
 
         try:
-            semester = int(self.semester_var.get())
-            max_students = int(self.max_students_var.get())
-        except ValueError as error:
-            raise ValueError('Semestre y números de alumnos deben ser numéricos') from error
+            semester = int(self.semester_var.get().strip())
+            max_students = int(self.max_students_var.get().strip())
+        except ValueError:
+            raise ValueError('Semestre y Máx. alumnos deben ser números enteros.')
 
-        return {
-            'name': self.name_var.get().strip(),
-            'careerId': int(self.career_var.get().split(' - ')[0]),
-            'subjectId': int(self.subject_var.get().split(' - ')[0]),
-            'teacherId': int(self.teacher_var.get().split(' - ')[0]),
-            'classroomId': int(self.classroom_var.get().split(' - ')[0]),
-            'scheduleId': int(self.schedule_var.get().split(' - ')[0]),
-            'semester': semester,
-            'maxStudents': max_students
-        }
+        if semester <= 0:
+            raise ValueError('El semestre debe ser un número positivo (ej. 1, 2, ...).')
+        if max_students <= 0:
+            raise ValueError('El Máx. de alumnos debe ser un número positivo.')
+        
+        payload['semester'] = semester
+        payload['maxStudents'] = max_students
+        # --- FIN VALIDACIÓN ---
+
+        return payload
 
     def _save(self) -> None:
         try:
@@ -233,29 +320,39 @@ class GroupsWindow(ModuleWindow):
         except ValueError as error:
             messagebox.showwarning("Validación", str(error))
             return
+            
         try:
             if self.current_id is None:
                 group = self.api.post('/groups', payload)
             else:
                 group = self.api.put(f"/groups/{self.current_id}", payload)
-        except Exception as error:  # noqa: BLE001
+        except ApiError as error:
+            messagebox.showerror("Error de API", error.message)
+            return
+        except Exception as error:
             messagebox.showerror("Error", str(error))
             return
+            
         messagebox.showinfo("Éxito", "Grupo guardado")
-        self._load_group(group['id'])
-        self._load_groups()
+        self._load_group(group['id']) # Recargar el formulario
+        self._load_groups() # Recargar la tabla
 
     def _delete(self) -> None:
         if self.current_id is None:
-            messagebox.showinfo("Operación", "Selecciona un grupo")
+            messagebox.showinfo("Operación", "Selecciona un grupo de la tabla para eliminar.")
             return
-        if not messagebox.askyesno("Eliminar", "¿Deseas eliminar el grupo?"):
+        if not messagebox.askyesno("Eliminar", f"¿Deseas eliminar el grupo '{self.name_var.get()}'?"):
             return
+            
         try:
             self.api.delete(f"/groups/{self.current_id}")
-        except Exception as error:  # noqa: BLE001
+        except ApiError as error:
+            messagebox.showerror("Error de API", error.message)
+            return
+        except Exception as error:
             messagebox.showerror("Error", str(error))
             return
+            
         messagebox.showinfo("Éxito", "Grupo eliminado")
         self._reset()
         self._load_groups()
@@ -272,3 +369,4 @@ class GroupsWindow(ModuleWindow):
         self.classroom_var.set('')
         self.schedule_var.set('')
         self.students_tree.delete(*self.students_tree.get_children())
+        self.tree.selection_remove(self.tree.selection()) # Deseleccionar tabla
