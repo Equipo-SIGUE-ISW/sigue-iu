@@ -57,6 +57,27 @@ class GroupsWindow(ttk.Frame):
         self._fetch_support_data()
         self._load_groups()
 
+    def _compose_combo_value(self, data_list: List[Dict[str, Any]], kind: str, item_id: int, fallback_label: str) -> str:
+        for item in data_list:
+            if item.get('id') == item_id:
+                if kind == 'classrooms':
+                    return f"{item['id']} - {item['name']} ({item['building']})"
+                if kind == 'schedules':
+                    return f"{item['id']} - {item['time']} ({item['shift']})"
+                label = item.get('name') or fallback_label
+                return f"{item['id']} - {label}"
+        return f"{item_id} - {fallback_label}"
+
+    def _set_combo_value(self, combo: ttk.Combobox, variable: tk.StringVar, value: str) -> None:
+        if not value:
+            variable.set('')
+            return
+        values = list(combo.cget('values'))
+        if value not in values:
+            values.append(value)
+            combo.configure(values=values)
+        variable.set(value)
+
     def _build_tree(self, container: ttk.Frame) -> None:
         tree_container = ttk.Frame(container, style='Content.TFrame')
         tree_container.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
@@ -238,32 +259,26 @@ class GroupsWindow(ttk.Frame):
         self.max_students_var.set(str(data['maxStudents']))
 
         # Helper para encontrar el string correcto en la lista de combobox
-        def find_in_list(data_list: List[Dict], key: str, data_id: int, name_key: str) -> str:
-            for item in data_list:
-                if item['id'] == data_id:
-                    # Reconstruir el string exacto del combobox
-                    if key == 'classrooms':
-                        return f"{item['id']} - {item['name']} ({item['building']})"
-                    if key == 'schedules':
-                        return f"{item['id']} - {item['time']} ({item['shift']})"
-                    return f"{item['id']} - {item[name_key]}"
-            return f"{data_id} - {data.get(name_key, 'N/A')}"
-
         if data.get('careerId'):
-            self.career_var.set(find_in_list(self.careers, 'careers', data['careerId'], 'careerName'))
+            career_value = self._compose_combo_value(self.careers, 'careers', data['careerId'], data.get('careerName', 'N/A'))
+            self._set_combo_value(self.career_combo, self.career_var, career_value)
         
         # Cargar materias ANTES de setear la materia
         self._refresh_subject_combo()
         if data.get('subjectId'):
             # No podemos usar find_in_list para materias, ya que se cargan dinámicamente
-            self.subject_var.set(f"{data['subjectId']} - {data.get('subjectName', 'N/A')}")
+            subject_value = f"{data['subjectId']} - {data.get('subjectName', 'N/A')}"
+            self._set_combo_value(self.subject_combo, self.subject_var, subject_value)
             
         if data.get('teacherId'):
-            self.teacher_var.set(find_in_list(self.teachers, 'teachers', data['teacherId'], 'teacherName'))
+            teacher_value = self._compose_combo_value(self.teachers, 'teachers', data['teacherId'], data.get('teacherName', 'N/A'))
+            self._set_combo_value(self.teacher_combo, self.teacher_var, teacher_value)
         if data.get('classroomId'):
-            self.classroom_var.set(find_in_list(self.classrooms, 'classrooms', data['classroomId'], 'classroomName'))
+            classroom_value = self._compose_combo_value(self.classrooms, 'classrooms', data['classroomId'], data.get('classroomName', 'N/A'))
+            self._set_combo_value(self.classroom_combo, self.classroom_var, classroom_value)
         if data.get('scheduleId'):
-            self.schedule_var.set(find_in_list(self.schedules, 'schedules', data['scheduleId'], 'scheduleTime'))
+            schedule_value = self._compose_combo_value(self.schedules, 'schedules', data['scheduleId'], data.get('scheduleTime', 'N/A'))
+            self._set_combo_value(self.schedule_combo, self.schedule_var, schedule_value)
 
         self._load_students(data.get('students', []))
 
